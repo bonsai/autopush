@@ -562,6 +562,159 @@ class GitAutoPush:
         print("🌐 GitHubリポジトリをブラウザで自動確認します...")
         return self.open_github_repo_in_browser()
 
+    def check_branch_divergence(self):
+        """ブランチの分岐状況をチェック"""
+        print("🔍 ブランチの分岐状況をチェックしています...")
+
+        # git statusの詳細な出力を取得
+        result = self.run_command("git status --porcelain=v1 --branch")
+        if not result:
+            return False
+
+        status_lines = result.stdout.strip().split('\n')
+        branch_info = status_lines[0] if status_lines else ""
+
+        # ブランチの分岐を検出
+        if "ahead" in branch_info and "behind" in branch_info:
+            print("⚠️  ブランチが分岐しています！")
+            print(f"📊 状況: {branch_info}")
+
+            # 詳細な状況を表示
+            ahead_match = __import__('re').search(r'ahead (\d+)', branch_info)
+            behind_match = __import__('re').search(r'behind (\d+)', branch_info)
+
+            if ahead_match and behind_match:
+                ahead = ahead_match.group(1)
+                behind = behind_match.group(1)
+                print(f"📤 ローカルが {ahead} コミット先行")
+                print(f"📥 リモートが {behind} コミット先行")
+
+            return True
+        elif "ahead" in branch_info:
+            ahead_match = __import__('re').search(r'ahead (\d+)', branch_info)
+            if ahead_match:
+                ahead = ahead_match.group(1)
+                print(f"✅ ローカルが {ahead} コミット先行（プッシュ可能）")
+        elif "behind" in branch_info:
+            behind_match = __import__('re').search(r'behind (\d+)', branch_info)
+            if behind_match:
+                behind = behind_match.group(1)
+                print(f"📥 リモートが {behind} コミット先行（プル必要）")
+                return True
+        else:
+            print("✅ ブランチは同期されています")
+
+        return False
+
+    def handle_branch_divergence(self):
+        """ブランチの分岐を処理"""
+        print("\n🔄 ブランチの分岐を解決します")
+        print("以下の選択肢があります:")
+        print("1. git pull --rebase (推奨: リモートの変更を取得してリベース)")
+        print("2. git pull (リモートの変更を取得してマージ)")
+        print("3. git push --force-with-lease (慎重: ローカルの変更を強制プッシュ)")
+        print("4. スキップ (手動で解決)")
+
+        while True:
+            choice = input("選択 (1/2/3/4): ").strip()
+
+            if choice == "1":
+                return self.pull_rebase()
+            elif choice == "2":
+                return self.pull_merge()
+            elif choice == "3":
+                if self.confirm_action("⚠️  強制プッシュは危険です。リモートの変更が失われる可能性があります。続行しますか？"):
+                    return self.force_push()
+                else:
+                    continue
+            elif choice == "4":
+                print("手動での解決を選択しました")
+                return True
+            else:
+                print("1, 2, 3, 4 のいずれかを選択してください")
+
+    def pull_rebase(self):
+        """git pull --rebase を実行"""
+        print("🔄 git pull --rebase を実行中...")
+        result = self.run_command("git pull --rebase")
+        if result:
+            print("✅ リベースが完了しました")
+            return True
+        else:
+            print("❌ リベースに失敗しました")
+            if "CONFLICT" in str(self.last_error):
+                print("⚠️  マージコンフリクトが発生しました")
+                self.handle_merge_conflict()
+            return False
+
+    def pull_merge(self):
+        """git pull を実行"""
+        print("🔄 git pull を実行中...")
+        result = self.run_command("git pull")
+        if result:
+            print("✅ マージが完了しました")
+            return True
+        else:
+            print("❌ マージに失敗しました")
+            if "CONFLICT" in str(self.last_error):
+                print("⚠️  マージコンフリクトが発生しました")
+                self.handle_merge_conflict()
+            return False
+
+    def force_push(self):
+        """git push --force-with-lease を実行"""
+        current_branch = self.get_current_branch()
+        print(f"🚀 {current_branch} ブランチに強制プッシュ中...")
+        result = self.run_command(f"git push --force-with-lease origin {current_branch}")
+        if result:
+            print("✅ 強制プッシュが完了しました")
+            return True
+        else:
+            print("❌ 強制プッシュに失敗しました")
+            return False
+
+    def handle_merge_conflict(self):
+        """マージコンフリクトを処理"""
+        print("🔧 マージコンフリクトの解決が必要です")
+        print("以下の選択肢があります:")
+        print("1. VSCodeでコンフリクトを解決")
+        print("2. 手動で解決")
+        print("3. マージを中止")
+
+        while True:
+            choice = input("選択 (1/2/3): ").strip()
+
+            if choice == "1":
+                try:
+                    subprocess.run("code .", shell=True, cwd=self.repo_path)
+                    print("✅ VSCodeを開きました。コンフリクトを解決してください")
+                    input("コンフリクトを解決したら Enter キーを押してください...")
+                    return True
+                except Exception as e:
+                    print(f"❌ VSCodeの起動に失敗しました: {e}")
+                    continue
+            elif choice == "2":
+                print("手動でコンフリクトを解決してください")
+                input("コンフリクトを解決したら Enter キーを押してください...")
+                return True
+            elif choice == "3":
+                result = self.run_command("git merge --abort")
+                if result:
+                    print("✅ マージを中止しました")
+                else:
+                    print("❌ マージの中止に失敗しました")
+                return False
+            else:
+                print("1, 2, 3 のいずれかを選択してください")
+
+    def check_working_tree_clean(self):
+        """ワーキングツリーがクリーンかチェック"""
+        status = self.get_status()
+        if not status:
+            print("ℹ️  ワーキングツリーはクリーンです（変更なし）")
+            return True
+        return False
+
     def auto_push(self, message=None, branch=None, force=False):
         """自動プッシュのメイン処理"""
         print("🤖 GIT Auto Push 開始")
@@ -570,6 +723,7 @@ class GitAutoPush:
         # 実行結果を記録する辞書
         execution_results = {
             "git_init": False,
+            "branch_sync": False,
             "staging": False,
             "commit": False,
             "push": False,
@@ -612,6 +766,17 @@ class GitAutoPush:
                 return False
             execution_results["git_init"] = True
 
+        # ブランチの分岐状況をチェック
+        if self.check_branch_divergence():
+            if self.handle_branch_divergence():
+                execution_results["branch_sync"] = True
+            else:
+                print("❌ ブランチの分岐解決に失敗しました")
+                self.print_execution_summary(execution_results)
+                return False
+        else:
+            execution_results["branch_sync"] = True
+
         # ステータスを表示
         self.debug_print("📝 git statusを取得中...")
         status_result = self.run_command("git status --porcelain -u")
@@ -621,6 +786,39 @@ class GitAutoPush:
                 print(f"  {line}")
         else:
             self.debug_print("✅ 変更されたファイルはありません")
+
+        # ワーキングツリーがクリーンな場合の処理
+        if self.check_working_tree_clean():
+            print("✅ すべての変更は既にコミット済みです")
+            execution_results["staging"] = True
+            execution_results["commit"] = True
+
+            # プッシュの確認
+            if self.confirm_action("最新の状態をリモートにプッシュしますか？"):
+                if self.push(branch):
+                    execution_results["push"] = True
+                else:
+                    print("❌ プッシュに失敗しました")
+                    self.print_execution_summary(execution_results)
+                    return False
+            else:
+                print("プッシュをスキップしました")
+                execution_results["push"] = True  # スキップも成功として扱う
+
+            # ブラウザでの確認
+            print("\n" + "="*50)
+            print("🎉 すべての操作が完了しました！")
+            print("="*50)
+
+            if self.confirm_browser_check():
+                execution_results["browser_open"] = True
+            else:
+                print("⚠️  ブラウザでの確認に失敗しました")
+
+            # 実行結果サマリーを表示
+            self.print_execution_summary(execution_results)
+            print("🎉 自動プッシュ完了!")
+            return True
 
         # ステージングの確認
         if not self.confirm_action("変更をステージングしますか？"):
@@ -680,6 +878,7 @@ class GitAutoPush:
         status_icons = {True: "✅", False: "❌"}
 
         print(f"{status_icons[results['git_init']]} Git初期化: {'成功' if results['git_init'] else '未実行/失敗'}")
+        print(f"{status_icons[results['branch_sync']]} ブランチ同期: {'成功' if results['branch_sync'] else '未実行/失敗'}")
         print(f"{status_icons[results['staging']]} ステージング: {'成功' if results['staging'] else '未実行/失敗'}")
         print(f"{status_icons[results['commit']]} コミット: {'成功' if results['commit'] else '未実行/失敗'}")
         print(f"{status_icons[results['push']]} プッシュ: {'成功' if results['push'] else '未実行/失敗'}")
