@@ -350,3 +350,42 @@ GitHub CLI が利用できない場合は、以下の手順で手動でリポジ
    git remote add origin https://github.com/username/repository.git
    ```
 3. 通常通りスクリプトを実行
+
+## 🌐 ブラウザでの確認フロー
+
+### 自動ブラウザ起動機能
+
+プッシュ完了後に、自動的にGitHubリポジトリをブラウザで開いて確認することができます。
+
+#### Python スクリプトでの確認
+```bash
+python git-auto-push.py /path/to/your/project
+# プッシュ完了後に以下のプロンプトが表示されます：
+# "GitHubリポジトリをブラウザで確認しますか？ (y/n): "
+```
+
+#### Windows バッチファイルでの確認
+```batch
+git-auto-push-with-github.bat /path/to/your/project
+# プッシュ完了後に以下のプロンプトが表示されます：
+# "GitHubリポジトリをブラウザで確認しますか？ (y/n): "
+```
+
+#### 手動でのブラウザ確認
+GitHub CLI を使用して手動でブラウザを開くこともできます：
+```bash
+gh repo view --web
+```
+
+### VSCode タスクの利用
+
+VSCodeでタスクを使用してスクリプトを実行することもできます：
+
+1. `Ctrl+Shift+P` → `Tasks: Run Task` を選択
+2. 以下のタスクから選択：
+   - `GIT Auto Push (Python)` - Python スクリプトを実行
+   - `GIT Auto Push (Python Debug)` - デバッグモードで実行
+   - `GIT Auto Push (Batch)` - バッチファイルを実行
+   - `Test GitHub CLI` - GitHub CLI の認証状態を確認
+   - `Open GitHub Repository` - GitHub リポジトリをブラウザで開く
+```

@@ -240,7 +240,25 @@ if %errorlevel% neq 0 (
 )
 echo ✅ プッシュ完了
 
-echo 🎉 自動プッシュ完了!
+echo.
+echo ==================================================
+echo           GIT Auto Push Completed!
+echo ==================================================
+echo Repository: %REPO_PATH%
+echo Branch: !CURRENT_BRANCH!
+echo Commit: !COMMIT_MESSAGE!
+echo ==================================================
+
+REM ブラウザでの確認を提案
+if defined USERNAME if defined REPO_NAME (
+    set /p "OPEN_BROWSER=GitHubリポジトリをブラウザで確認しますか？ (y/n): "
+    if /i "!OPEN_BROWSER!"=="y" (
+        echo ブラウザでGitHubリポジトリを開きます...
+        start "" "https://github.com/!USERNAME!/!REPO_NAME!"
+    )
+)
+
+cd /d "%ORIGINAL_DIR%"
 exit /b 0
 
 :create_github_repo

@@ -11,6 +11,8 @@ import datetime
 import argparse
 from pathlib import Path
 import json
+import webbrowser
+import urllib.parse
 
 class GitAutoPush:
     def __init__(self, repo_path=".", debug=False):
@@ -494,6 +496,35 @@ class GitAutoPush:
                     return True
         return False
     
+    def open_github_repo_in_browser(self):
+        """GitHub リポジトリをブラウザで開く"""
+        if not self.github_cli_available:
+            print("GitHub CLI が利用できないため、ブラウザでの確認をスキップします")
+            return False
+        
+        repo_name = self.get_repo_name()
+        username = self.get_github_username()
+        
+        if not username:
+            print("GitHub ユーザー名を取得できませんでした")
+            return False
+        
+        repo_url = f"https://github.com/{username}/{repo_name}"
+        
+        try:
+            print(f"🌐 GitHubリポジトリをブラウザで開きます: {repo_url}")
+            webbrowser.open(repo_url)
+            return True
+        except Exception as e:
+            print(f"❌ ブラウザでの表示に失敗しました: {e}")
+            return False
+    
+    def confirm_browser_check(self):
+        """ブラウザでの確認を提案"""
+        if self.confirm_action("GitHubリポジトリをブラウザで確認しますか？"):
+            return self.open_github_repo_in_browser()
+        return False
+    
     def auto_push(self, message=None, branch=None, force=False):
         """自動プッシュのメイン処理"""
         print("🤖 GIT Auto Push 開始")
@@ -557,6 +588,9 @@ class GitAutoPush:
         # プッシュの確認とプッシュ
         if not self.push(branch):
             return False
+        
+        # ブラウザでの確認
+        self.confirm_browser_check()
         
         print("🎉 自動プッシュ完了!")
         return True
