@@ -534,36 +534,47 @@ class GitAutoPush:
     def open_github_repo_in_browser(self):
         """GitHub リポジトリをブラウザで開く"""
         if not self.github_cli_available:
-            print("GitHub CLI が利用できないため、ブラウザでの確認をスキップします")
+            print("⚠️  GitHub CLI が利用できないため、ブラウザでの確認をスキップします")
             return False
 
         repo_name = self.get_repo_name()
         username = self.get_github_username()
 
         if not username:
-            print("GitHub ユーザー名を取得できませんでした")
+            print("⚠️  GitHub ユーザー名を取得できませんでした")
             return False
 
         repo_url = f"https://github.com/{username}/{repo_name}"
 
         try:
-            print(f"🌐 GitHubリポジトリをブラウザで開きます: {repo_url}")
+            print(f"🌐 GitHubリポジトリをブラウザで開いています...")
+            print(f"🔗 URL: {repo_url}")
             webbrowser.open(repo_url)
+            print("✅ ブラウザでGitHubリポジトリを開きました")
             return True
         except Exception as e:
             print(f"❌ ブラウザでの表示に失敗しました: {e}")
+            print(f"🔗 手動で以下のURLにアクセスしてください: {repo_url}")
             return False
 
     def confirm_browser_check(self):
-        """ブラウザでの確認を提案"""
-        if self.confirm_action("GitHubリポジトリをブラウザで確認しますか？"):
-            return self.open_github_repo_in_browser()
-        return False
+        """ブラウザでの確認を自動実行"""
+        print("🌐 GitHubリポジトリをブラウザで自動確認します...")
+        return self.open_github_repo_in_browser()
 
     def auto_push(self, message=None, branch=None, force=False):
         """自動プッシュのメイン処理"""
         print("🤖 GIT Auto Push 開始")
         print(f"📂 リポジトリ: {self.repo_path}")
+
+        # 実行結果を記録する辞書
+        execution_results = {
+            "git_init": False,
+            "staging": False,
+            "commit": False,
+            "push": False,
+            "browser_open": False
+        }
 
         # デバッグ情報
         self.debug_print(f"📁 作業ディレクトリ: {os.getcwd()}")
@@ -575,12 +586,14 @@ class GitAutoPush:
         # リポジトリディレクトリの存在確認
         if not self.repo_path.exists():
             print(f"❌ エラー: 指定されたディレクトリが見つかりません: {self.repo_path}")
+            self.print_execution_summary(execution_results)
             return False
 
         # Gitプロセスとロックファイルをチェック
         if self.check_git_processes():
             if not self.confirm_action("実行中のGitプロセスが見つかりました。続行しますか？"):
                 print("処理を中止しました")
+                self.print_execution_summary(execution_results)
                 return False
 
         if self.check_git_locks():
@@ -591,10 +604,13 @@ class GitAutoPush:
             print("⚠️  Gitリポジトリではありません。")
             if not self.confirm_action("Gitリポジトリを初期化しますか？"):
                 print("処理を中止しました")
+                self.print_execution_summary(execution_results)
                 return False
             if not self.init_git_repo():
                 print("❌ エラー: Gitリポジトリの初期化に失敗しました")
+                self.print_execution_summary(execution_results)
                 return False
+            execution_results["git_init"] = True
 
         # ステータスを表示
         self.debug_print("📝 git statusを取得中...")
@@ -609,30 +625,78 @@ class GitAutoPush:
         # ステージングの確認
         if not self.confirm_action("変更をステージングしますか？"):
             print("処理を中止しました")
+            self.print_execution_summary(execution_results)
             return False
 
         # 変更をステージング
         if not self.add_all():
+            print("❌ ステージングに失敗しました")
+            self.print_execution_summary(execution_results)
             return False
+        execution_results["staging"] = True
 
         # コミットの確認
         if not self.confirm_action("コミットしますか？"):
             print("処理を中止しました")
+            self.print_execution_summary(execution_results)
             return False
 
         # コミット
         if not self.commit(message):
+            print("❌ コミットに失敗しました")
+            self.print_execution_summary(execution_results)
             return False
+        execution_results["commit"] = True
 
         # プッシュの確認とプッシュ
         if not self.push(branch):
+            print("❌ プッシュに失敗しました")
+            self.print_execution_summary(execution_results)
             return False
+        execution_results["push"] = True
 
-        # ブラウザでの確認
-        self.confirm_browser_check()
+        # ブラウザでの確認（必須）
+        print("\n" + "="*50)
+        print("🎉 すべての操作が完了しました！")
+        print("="*50)
+
+        if self.confirm_browser_check():
+            execution_results["browser_open"] = True
+        else:
+            print("⚠️  ブラウザでの確認に失敗しました")
+
+        # 実行結果サマリーを表示
+        self.print_execution_summary(execution_results)
 
         print("🎉 自動プッシュ完了!")
         return True
+
+    def print_execution_summary(self, results):
+        """実行結果のサマリーを表示"""
+        print("\n" + "="*60)
+        print("📊 実行結果サマリー")
+        print("="*60)
+
+        status_icons = {True: "✅", False: "❌"}
+
+        print(f"{status_icons[results['git_init']]} Git初期化: {'成功' if results['git_init'] else '未実行/失敗'}")
+        print(f"{status_icons[results['staging']]} ステージング: {'成功' if results['staging'] else '未実行/失敗'}")
+        print(f"{status_icons[results['commit']]} コミット: {'成功' if results['commit'] else '未実行/失敗'}")
+        print(f"{status_icons[results['push']]} プッシュ: {'成功' if results['push'] else '未実行/失敗'}")
+        print(f"{status_icons[results['browser_open']]} ブラウザ確認: {'成功' if results['browser_open'] else '未実行/失敗'}")
+
+        # 成功した項目の数を計算
+        success_count = sum(1 for result in results.values() if result)
+        total_count = len(results)
+
+        print(f"\n🎯 成功率: {success_count}/{total_count} ({success_count/total_count*100:.1f}%)")
+
+        if success_count == total_count:
+            print("🎉 すべての操作が正常に完了しました！")
+        else:
+            print("⚠️  一部の操作が失敗しました。上記の結果を確認してください。")
+
+        print("="*60)
 
 def main():
     parser = argparse.ArgumentParser(description="GIT Auto Push Script")
