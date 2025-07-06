@@ -10,13 +10,251 @@ import subprocess
 import datetime
 import argparse
 from pathlib import Path
+import json
 
 class GitAutoPush:
     def __init__(self, repo_path=".", debug=False):
         self.repo_path = Path(repo_path).resolve()
         self.git_path = self.repo_path / ".git"
         self.debug = debug
+        self.github_cli_available = self.check_github_cli()
         
+    def check_github_cli(self):
+        """GitHub CLI (gh) が利用可能かチェック"""
+        try:
+            result = subprocess.run(
+                "gh --version",
+                shell=True,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                self.debug_print("GitHub CLI (gh) が利用可能です")
+                return True
+            else:
+                self.debug_print("GitHub CLI (gh) が見つかりません")
+                return False
+        except Exception as e:
+            self.debug_print(f"GitHub CLI チェックエラー: {e}")
+            return False
+    
+    def check_github_auth(self):
+        """GitHub CLI の認証状態をチェック"""
+        if not self.github_cli_available:
+            return False
+        
+        try:
+            result = subprocess.run(
+                "gh auth status",
+                shell=True,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                self.debug_print("GitHub CLI 認証済み")
+                return True
+            else:
+                self.debug_print("GitHub CLI 認証が必要")
+                return False
+        except Exception as e:
+            self.debug_print(f"GitHub CLI 認証チェックエラー: {e}")
+            return False
+    
+    def get_repo_name(self):
+        """リポジトリ名を取得"""
+        return self.repo_path.name
+    
+    def get_github_username(self):
+        """GitHub ユーザー名を取得"""
+        if not self.github_cli_available:
+            return None
+        
+        try:
+            result = subprocess.run(
+                "gh api user",
+                shell=True,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                user_data = json.loads(result.stdout)
+                username = user_data.get('login')
+                self.debug_print(f"GitHub ユーザー名: {username}")
+                return username
+        except Exception as e:
+            self.debug_print(f"GitHub ユーザー名取得エラー: {e}")
+        
+        return None
+    
+    def check_remote_repo_exists(self):
+        """リモートリポジトリが存在するかチェック"""
+        if not self.github_cli_available:
+            return None
+        
+        repo_name = self.get_repo_name()
+        username = self.get_github_username()
+        
+        if not username:
+            return None
+        
+        try:
+            result = subprocess.run(
+                f"gh repo view {username}/{repo_name}",
+                shell=True,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                self.debug_print(f"GitHub リポジトリ {username}/{repo_name} が存在します")
+                return True
+            else:
+                self.debug_print(f"GitHub リポジトリ {username}/{repo_name} が見つかりません")
+                return False
+        except Exception as e:
+            self.debug_print(f"リモートリポジトリチェックエラー: {e}")
+            return None
+    
+    def create_github_repo(self):
+        """GitHub リポジトリを作成"""
+        if not self.github_cli_available:
+            print("❌ GitHub CLI (gh) が利用できません。手動でリポジトリを作成してください。")
+            return False
+        
+        if not self.check_github_auth():
+            print("❌ GitHub CLI の認証が必要です。'gh auth login' を実行してください。")
+            return False
+        
+        repo_name = self.get_repo_name()
+        
+        print(f"📦 GitHub リポジトリ '{repo_name}' を作成しています...")
+        
+        # リポジトリの可視性を選択
+        print("\nリポジトリの可視性を選択してください:")
+        print("1. public (公開)")
+        print("2. private (非公開)")
+        
+        while True:
+            choice = input("選択 (1/2): ").strip()
+            if choice == "1":
+                visibility = "--public"
+                break
+            elif choice == "2":
+                visibility = "--private"
+                break
+            else:
+                print("1 または 2 を選択してください")
+        
+        # 説明文を入力
+        description = self.get_user_input("リポジトリの説明 (オプション)", "")
+        
+        # GitHub リポジトリ作成コマンドを構築
+        cmd = f"gh repo create {repo_name} {visibility}"
+        if description:
+            cmd += f' --description "{description}"'
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=self.repo_path
+            )
+            
+            if result.returncode == 0:
+                print(f"✅ GitHub リポジトリ '{repo_name}' を作成しました")
+                
+                # リモートを追加
+                username = self.get_github_username()
+                if username:
+                    remote_url = f"https://github.com/{username}/{repo_name}.git"
+                    add_remote_result = self.run_command(f"git remote add origin {remote_url}")
+                    if add_remote_result:
+                        print(f"✅ リモートリポジトリを追加しました: {remote_url}")
+                        return True
+                    else:
+                        print("⚠️  リモートリポジトリの追加に失敗しました")
+                        return False
+                else:
+                    print("⚠️  GitHub ユーザー名の取得に失敗しました")
+                    return False
+            else:
+                print(f"❌ GitHub リポジトリの作成に失敗しました: {result.stderr}")
+                return False
+        except Exception as e:
+            print(f"❌ GitHub リポジトリ作成エラー: {e}")
+            return False
+    
+    def handle_github_repository(self):
+        """GitHub リポジトリの確認と作成処理"""
+        if not self.github_cli_available:
+            print("ℹ️  GitHub CLI が利用できません。手動でリポジトリを確認してください。")
+            return True
+        
+        # リモートリポジトリの存在確認
+        repo_exists = self.check_remote_repo_exists()
+        
+        if repo_exists is True:
+            print("✅ GitHub リポジトリが存在します")
+            return True
+        elif repo_exists is False:
+            print("⚠️  GitHub リポジトリが見つかりません")
+            
+            if self.confirm_action("GitHub リポジトリを作成しますか？"):
+                return self.create_github_repo()
+            else:
+                print("GitHub リポジトリの作成をスキップしました")
+                print("⚠️  プッシュ時にエラーが発生する可能性があります")
+                return True
+        else:
+            print("ℹ️  GitHub リポジトリの確認をスキップしました")
+            return True
+    
+    def run_command(self, command, cwd=None):
+        """コマンドを実行"""
+        if cwd is None:
+            cwd = self.repo_path
+        
+        try:
+            self.debug_print(f"実行中: {command}")
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+            
+            if result.returncode == 0:
+                self.debug_print(f"成功: {result.stdout}")
+                return result
+            else:
+                self.last_error = result.stderr
+                self.debug_print(f"失敗: {result.stderr}")
+                return None
+        except Exception as e:
+            self.last_error = str(e)
+            self.debug_print(f"例外: {e}")
+            return None
+    
+    def debug_print(self, message):
+        """デバッグメッセージを出力"""
+        if self.debug:
+            print(f"[DEBUG] {message}")
+    
+    def init_git_repo(self):
+        """Gitリポジトリを初期化"""
+        print("🔧 Gitリポジトリを初期化しています...")
+        result = self.run_command("git init")
+        if result:
+            print("✅ Gitリポジトリを初期化しました")
+            return True
+        else:
+            print("❌ Gitリポジトリの初期化に失敗しました")
+            return False
+    
     def is_git_repo(self):
         """Gitリポジトリかどうかをチェック"""
         return self.git_path.exists()
@@ -33,12 +271,12 @@ class GitAutoPush:
         """アクションの確認"""
         while True:
             response = input(f"{message} (y/n): ").strip().lower()
-            if response in ['y', 'yes', 'はい']:
+            if response in ['y', 'yes']:
                 return True
-            elif response in ['n', 'no', 'いいえ']:
+            elif response in ['n', 'no']:
                 return False
             else:
-                print("y/n で答えてください")
+                print("'y' または 'n' を入力してください")
     
     def check_git_processes(self):
         """実行中のGitプロセスをチェック"""
@@ -77,6 +315,48 @@ class GitAutoPush:
             self.debug_print(f"プロセスチェックエラー: {e}")
             return False
     
+    def clean_git_locks(self):
+        """全てのGitロックファイルを強制的にクリーンアップ"""
+        print("🧹 Gitロックファイルを強制クリーンアップ中...")
+        lock_patterns = [
+            "index.lock",
+            "HEAD.lock", 
+            "config.lock",
+            "refs/heads/*.lock",
+            "refs/remotes/*/**.lock"
+        ]
+        
+        cleaned = 0
+        for pattern in lock_patterns:
+            lock_path = self.git_path / pattern
+            # 直接のファイル
+            if lock_path.exists():
+                try:
+                    lock_path.unlink()
+                    print(f"✅ 削除: {lock_path}")
+                    cleaned += 1
+                except Exception as e:
+                    print(f"❌ 削除失敗: {lock_path} - {e}")
+            
+            # パターンマッチング
+            if "*" in pattern:
+                parent_dir = self.git_path / pattern.split("*")[0].rstrip("/")
+                if parent_dir.exists():
+                    for lock_file in parent_dir.rglob("*.lock"):
+                        try:
+                            lock_file.unlink()
+                            print(f"✅ 削除: {lock_file}")
+                            cleaned += 1
+                        except Exception as e:
+                            print(f"❌ 削除失敗: {lock_file} - {e}")
+        
+        if cleaned > 0:
+            print(f"🎯 {cleaned}個のロックファイルを削除しました")
+        else:
+            print("ℹ️  削除するロックファイルはありませんでした")
+        
+        return cleaned > 0
+    
     def check_git_locks(self):
         """Gitロックファイルをチェック"""
         self.debug_print("Gitロックファイルをチェック中...")
@@ -93,56 +373,30 @@ class GitAutoPush:
                 found_locks.append(lock_file)
         
         if found_locks:
-            if self.confirm_action("ロックファイルを削除しますか？"):
+            print("ロックファイルが見つかりました。以下から選択してください:")
+            print("1. 個別に確認して削除")
+            print("2. 全て削除")
+            print("3. スキップ")
+            
+            choice = input("選択 (1/2/3): ").strip()
+            
+            if choice == "1":
                 for lock_file in found_locks:
-                    try:
-                        lock_file.unlink()
-                        print(f"✅ ロックファイル削除: {lock_file}")
-                    except Exception as e:
-                        print(f"❌ ロックファイル削除失敗: {lock_file} - {e}")
+                    if self.confirm_action(f"{lock_file}を削除しますか？"):
+                        try:
+                            lock_file.unlink()
+                            print(f"✅ ロックファイル削除: {lock_file}")
+                        except Exception as e:
+                            print(f"❌ ロックファイル削除失敗: {lock_file} - {e}")
+            elif choice == "2":
+                return self.clean_git_locks()
+            else:
+                print("ロックファイルの処理をスキップしました")
+            
             return True
         else:
             self.debug_print("ロックファイルはありません")
             return False
-    
-    def init_git_repo(self):
-        """Gitリポジトリを初期化"""
-        print("📁 Gitリポジトリを初期化中...")
-        result = self.run_command("git init")
-        if result:
-            print("✅ Gitリポジトリを初期化しました")
-            return True
-        return False
-    
-    def debug_print(self, message):
-        """デバッグメッセージを出力"""
-        if self.debug:
-            print(f"🔧 DEBUG: {message}")
-    
-    def run_command(self, command, capture_output=True):
-        """コマンドを実行"""
-        self.debug_print(f"実行コマンド: {command}")
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=self.repo_path,
-                capture_output=capture_output,
-                text=True,
-                check=True
-            )
-            self.debug_print("コマンド成功")
-            if result.stdout and self.debug:
-                self.debug_print(f"標準出力: {result.stdout.strip()}")
-            return result
-        except subprocess.CalledProcessError as e:
-            print(f"❌ エラー: {e}")
-            self.debug_print(f"終了コード: {e.returncode}")
-            if e.stdout:
-                print(f"出力: {e.stdout}")
-            if e.stderr:
-                print(f"エラー: {e.stderr}")
-            return None
     
     def get_status(self):
         """git statusを取得"""
@@ -221,12 +475,23 @@ class GitAutoPush:
             print("✅ プッシュ完了")
             return True
         else:
-            # 初回プッシュの場合、upstream を設定
-            print("🔄 初回プッシュのようです。upstream を設定してリトライします...")
-            result = self.run_command(f"git push -u origin {branch}")
-            if result:
-                print("✅ プッシュ完了")
-                return True
+            # リモートリポジトリが存在しない可能性をチェック
+            print("🔄 プッシュに失敗しました。リモートリポジトリを確認中...")
+            
+            if self.handle_github_repository():
+                # リモートリポジトリが作成された場合、再度プッシュを試行
+                print("🔄 リモートリポジトリが設定されました。再度プッシュします...")
+                result = self.run_command(f"git push -u origin {branch}")
+                if result:
+                    print("✅ プッシュ完了")
+                    return True
+            else:
+                # 初回プッシュの場合、upstream を設定
+                print("🔄 初回プッシュのようです。upstream を設定してリトライします...")
+                result = self.run_command(f"git push -u origin {branch}")
+                if result:
+                    print("✅ プッシュ完了")
+                    return True
         return False
     
     def auto_push(self, message=None, branch=None, force=False):
@@ -240,8 +505,13 @@ class GitAutoPush:
         self.debug_print(f".gitパス: {self.git_path}")
         
         # Gitプロセスとロックファイルをチェック
-        self.check_git_processes()
-        self.check_git_locks()
+        if self.check_git_processes():
+            if not self.confirm_action("実行中のGitプロセスが見つかりました。続行しますか？"):
+                print("処理を中止しました")
+                return False
+        
+        if self.check_git_locks():
+            print("ロックファイルの処理を完了しました")
         
         # Gitリポジトリかチェック
         if not self.is_git_repo():
@@ -312,4 +582,4 @@ def main():
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
-    main() 
+    main()

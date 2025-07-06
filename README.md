@@ -223,8 +223,12 @@ python git-auto-push.py .
 # ❌ 間違った使い方（リポジトリパスが必須）
 python git-auto-push.py
 
+# ❌ ファイル名を引数にしてしまう間違い
+python git-auto-push.py git-auto-push.py
+
 # ✅ 正しい使い方
-python git-auto-push.py .
+python git-auto-push.py .                    # 現在のディレクトリ
+python git-auto-push.py autopush            # autopushフォルダ
 python git-auto-push.py . -m "コミットメッセージ"
 python git-auto-push.py /path/to/repo -m "コミットメッセージ"
 ```
@@ -238,6 +242,27 @@ python git-auto-push.bat
 git-auto-push.bat
 # または
 ./git-auto-push.bat
+```
+
+**3. Git ロックファイルエラー**
+```bash
+# エラー: "Another git process seems to be running"
+# 解決方法: デバッグモードで実行
+python git-auto-push.py . --debug
+
+# ロックファイルを手動削除
+rm .git/index.lock
+# または（Windows）
+del .git\index.lock
+```
+
+**4. 文字エンコーディングエラー**
+```bash
+# 日本語文字が原因のエラーが発生した場合
+# 以下の環境変数を設定
+set PYTHONIOENCODING=utf-8
+# その後スクリプトを実行
+python git-auto-push.py .
 ```
 
 **3. スクリプトファイルが見つからない**
@@ -282,4 +307,46 @@ MIT License - 自由に使用・改変可能
 
 ---
 
-**GIT Auto Push** - Git操作を自動化して開発効率を向上！🚀 
+**GIT Auto Push** - Git操作を自動化して開発効率を向上！🚀
+
+## 🚀 GitHub リポジトリ自動作成機能
+
+### 前提条件
+
+#### GitHub CLI のインストール
+- **Windows**: https://cli.github.com/ からダウンロードしてインストール
+- **macOS**: `brew install gh`
+- **Linux**: `sudo apt install gh` または `sudo yum install gh`
+
+#### GitHub CLI の認証
+```bash
+gh auth login
+```
+- ブラウザまたはトークンで認証
+- 必要な権限を付与
+
+### 自動作成機能の流れ
+
+1. **リポジトリ存在確認**
+   - `gh repo view <repository_name>` でリポジトリの存在を確認
+   - 存在しない場合は作成を提案
+
+2. **インタラクティブな作成**
+   - 可視性の選択（public/private）
+   - 説明文の入力（オプション）
+   - 確認後にリポジトリ作成
+
+3. **リモートリポジトリの設定**
+   - `origin` リモートの自動追加
+   - 初回プッシュ時の upstream 設定
+
+### GitHub CLI が利用できない場合
+
+GitHub CLI が利用できない場合は、以下の手順で手動でリポジトリを作成してください：
+
+1. GitHub でリポジトリを作成
+2. ローカルリポジトリにリモートを追加：
+   ```bash
+   git remote add origin https://github.com/username/repository.git
+   ```
+3. 通常通りスクリプトを実行
