@@ -12,9 +12,10 @@ import argparse
 from pathlib import Path
 
 class GitAutoPush:
-    def __init__(self, repo_path="."):
+    def __init__(self, repo_path=".", debug=False):
         self.repo_path = Path(repo_path).resolve()
         self.git_path = self.repo_path / ".git"
+        self.debug = debug
         
     def is_git_repo(self):
         """Gitリポジトリかどうかをチェック"""
@@ -39,6 +40,71 @@ class GitAutoPush:
             else:
                 print("y/n で答えてください")
     
+    def check_git_processes(self):
+        """実行中のGitプロセスをチェック"""
+        self.debug_print("実行中のGitプロセスをチェック中...")
+        try:
+            # Windowsの場合
+            if os.name == 'nt':
+                result = subprocess.run(
+                    'tasklist /FI "IMAGENAME eq git.exe"',
+                    shell=True,
+                    capture_output=True,
+                    text=True
+                )
+                if "git.exe" in result.stdout:
+                    print("⚠️  実行中のGitプロセスが見つかりました:")
+                    print(result.stdout)
+                    return True
+            # Unix系の場合
+            else:
+                result = subprocess.run(
+                    'ps aux | grep git',
+                    shell=True,
+                    capture_output=True,
+                    text=True
+                )
+                git_processes = [line for line in result.stdout.split('\n') if 'git' in line and 'grep' not in line]
+                if git_processes:
+                    print("⚠️  実行中のGitプロセスが見つかりました:")
+                    for process in git_processes:
+                        print(process)
+                    return True
+            
+            self.debug_print("実行中のGitプロセスはありません")
+            return False
+        except Exception as e:
+            self.debug_print(f"プロセスチェックエラー: {e}")
+            return False
+    
+    def check_git_locks(self):
+        """Gitロックファイルをチェック"""
+        self.debug_print("Gitロックファイルをチェック中...")
+        lock_files = [
+            self.git_path / "index.lock",
+            self.git_path / "HEAD.lock",
+            self.git_path / "config.lock"
+        ]
+        
+        found_locks = []
+        for lock_file in lock_files:
+            if lock_file.exists():
+                print(f"⚠️  ロックファイル発見: {lock_file}")
+                found_locks.append(lock_file)
+        
+        if found_locks:
+            if self.confirm_action("ロックファイルを削除しますか？"):
+                for lock_file in found_locks:
+                    try:
+                        lock_file.unlink()
+                        print(f"✅ ロックファイル削除: {lock_file}")
+                    except Exception as e:
+                        print(f"❌ ロックファイル削除失敗: {lock_file} - {e}")
+            return True
+        else:
+            self.debug_print("ロックファイルはありません")
+            return False
+    
     def init_git_repo(self):
         """Gitリポジトリを初期化"""
         print("📁 Gitリポジトリを初期化中...")
@@ -48,8 +114,14 @@ class GitAutoPush:
             return True
         return False
     
+    def debug_print(self, message):
+        """デバッグメッセージを出力"""
+        if self.debug:
+            print(f"🔧 DEBUG: {message}")
+    
     def run_command(self, command, capture_output=True):
         """コマンドを実行"""
+        self.debug_print(f"実行コマンド: {command}")
         try:
             result = subprocess.run(
                 command,
@@ -59,9 +131,13 @@ class GitAutoPush:
                 text=True,
                 check=True
             )
+            self.debug_print("コマンド成功")
+            if result.stdout and self.debug:
+                self.debug_print(f"標準出力: {result.stdout.strip()}")
             return result
         except subprocess.CalledProcessError as e:
             print(f"❌ エラー: {e}")
+            self.debug_print(f"終了コード: {e.returncode}")
             if e.stdout:
                 print(f"出力: {e.stdout}")
             if e.stderr:
@@ -158,6 +234,15 @@ class GitAutoPush:
         print("🤖 GIT Auto Push 開始")
         print(f"📂 リポジトリ: {self.repo_path}")
         
+        # デバッグ情報
+        self.debug_print(f"作業ディレクトリ: {os.getcwd()}")
+        self.debug_print(f"指定リポジトリ: {self.repo_path}")
+        self.debug_print(f".gitパス: {self.git_path}")
+        
+        # Gitプロセスとロックファイルをチェック
+        self.check_git_processes()
+        self.check_git_locks()
+        
         # Gitリポジトリかチェック
         if not self.is_git_repo():
             print("⚠️  Gitリポジトリではありません。")
@@ -169,6 +254,7 @@ class GitAutoPush:
                 return False
         
         # ステータスを表示
+        self.debug_print("git statusを取得中...")
         status_result = self.run_command("git status --porcelain")
         if status_result and status_result.stdout.strip():
             print("\n📝 変更されたファイル:")
@@ -211,11 +297,12 @@ def main():
     parser.add_argument("--message", "-m", help="コミットメッセージ")
     parser.add_argument("--branch", "-b", help="プッシュするブランチ")
     parser.add_argument("--force", "-f", action="store_true", help="強制プッシュ")
+    parser.add_argument("--debug", "-d", action="store_true", help="デバッグモード")
     
     args = parser.parse_args()
     
     # 自動プッシュ実行
-    auto_push = GitAutoPush(args.repo)
+    auto_push = GitAutoPush(args.repo, debug=args.debug)
     success = auto_push.auto_push(
         message=args.message,
         branch=args.branch,
