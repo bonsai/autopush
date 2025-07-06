@@ -19,6 +19,7 @@ class GitAutoPush:
         self.repo_path = Path(repo_path).resolve()
         self.git_path = self.repo_path / ".git"
         self.debug = debug
+        self.last_error = None
         self.github_cli_available = self.check_github_cli()
         
     def check_github_cli(self):
@@ -28,7 +29,9 @@ class GitAutoPush:
                 "gh --version",
                 shell=True,
                 capture_output=True,
-                text=True
+                text=True,
+                encoding='utf-8',
+                errors='ignore'
             )
             if result.returncode == 0:
                 self.debug_print("GitHub CLI (gh) が利用可能です")
@@ -50,7 +53,9 @@ class GitAutoPush:
                 "gh auth status",
                 shell=True,
                 capture_output=True,
-                text=True
+                text=True,
+                encoding='utf-8',
+                errors='ignore'
             )
             if result.returncode == 0:
                 self.debug_print("GitHub CLI 認証済み")
@@ -76,7 +81,9 @@ class GitAutoPush:
                 "gh api user",
                 shell=True,
                 capture_output=True,
-                text=True
+                text=True,
+                encoding='utf-8',
+                errors='ignore'
             )
             if result.returncode == 0:
                 user_data = json.loads(result.stdout)
@@ -219,22 +226,71 @@ class GitAutoPush:
         
         try:
             self.debug_print(f"実行中: {command}")
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace'
-            )
+            # Windows環境での文字エンコーディング問題を解決
+            if os.name == 'nt':
+                # Windowsの場合はUTF-8を強制し、エラー時は無視
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore'
+                )
+            else:
+                # Unix系の場合は通常通り
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace'
+                )
             
+            # git initは成功時でも標準エラー出力に出力することがある
             if result.returncode == 0:
-                self.debug_print(f"成功: {result.stdout}")
+                self.debug_print(f"成功: stdout={result.stdout}, stderr={result.stderr}")
                 return result
             else:
                 self.last_error = result.stderr
-                self.debug_print(f"失敗: {result.stderr}")
+                self.debug_print(f"失敗: returncode={result.returncode}, stderr={result.stderr}")
+                return None
+        except UnicodeDecodeError as e:
+            self.debug_print(f"文字エンコーディングエラー: {e}")
+            # 文字エンコーディングエラーの場合は、バイナリモードで再実行
+            try:
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    cwd=cwd,
+                    capture_output=True
+                )
+                # バイナリを適切にデコード
+                stdout = result.stdout.decode('utf-8', errors='ignore') if result.stdout else ""
+                stderr = result.stderr.decode('utf-8', errors='ignore') if result.stderr else ""
+                
+                # 結果オブジェクトを作成
+                class Result:
+                    def __init__(self, returncode, stdout, stderr):
+                        self.returncode = returncode
+                        self.stdout = stdout
+                        self.stderr = stderr
+                
+                decoded_result = Result(result.returncode, stdout, stderr)
+                
+                if result.returncode == 0:
+                    self.debug_print(f"成功 (デコード後): stdout={stdout}, stderr={stderr}")
+                    return decoded_result
+                else:
+                    self.last_error = stderr
+                    self.debug_print(f"失敗 (デコード後): returncode={result.returncode}, stderr={stderr}")
+                    return None
+            except Exception as fallback_e:
+                self.last_error = str(fallback_e)
+                self.debug_print(f"フォールバック実行も失敗: {fallback_e}")
                 return None
         except Exception as e:
             self.last_error = str(e)
@@ -249,12 +305,20 @@ class GitAutoPush:
     def init_git_repo(self):
         """Gitリポジトリを初期化"""
         print("🔧 Gitリポジトリを初期化しています...")
+        
+        # 既にGitリポジトリの場合は成功として扱う
+        if self.is_git_repo():
+            print("✅ 既にGitリポジトリとして初期化されています")
+            return True
+        
         result = self.run_command("git init")
         if result:
             print("✅ Gitリポジトリを初期化しました")
             return True
         else:
             print("❌ Gitリポジトリの初期化に失敗しました")
+            if hasattr(self, 'last_error') and self.last_error:
+                print(f"エラー詳細: {self.last_error}")
             return False
     
     def is_git_repo(self):
@@ -290,7 +354,9 @@ class GitAutoPush:
                     'tasklist /FI "IMAGENAME eq git.exe"',
                     shell=True,
                     capture_output=True,
-                    text=True
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore'
                 )
                 if "git.exe" in result.stdout:
                     print("⚠️  実行中のGitプロセスが見つかりました:")
@@ -302,7 +368,9 @@ class GitAutoPush:
                     'ps aux | grep git',
                     shell=True,
                     capture_output=True,
-                    text=True
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore'
                 )
                 git_processes = [line for line in result.stdout.split('\n') if 'git' in line and 'grep' not in line]
                 if git_processes:
@@ -402,7 +470,7 @@ class GitAutoPush:
     
     def get_status(self):
         """git statusを取得"""
-        result = self.run_command("git status --porcelain")
+        result = self.run_command("git status --porcelain -u")
         if result:
             return result.stdout.strip()
         return ""
@@ -533,7 +601,14 @@ class GitAutoPush:
         # デバッグ情報
         self.debug_print(f"作業ディレクトリ: {os.getcwd()}")
         self.debug_print(f"指定リポジトリ: {self.repo_path}")
+        self.debug_print(f"リポジトリ存在チェック: {self.repo_path.exists()}")
         self.debug_print(f".gitパス: {self.git_path}")
+        self.debug_print(f".gitパス存在チェック: {self.git_path.exists()}")
+        
+        # リポジトリディレクトリの存在確認
+        if not self.repo_path.exists():
+            print(f"❌ エラー: 指定されたディレクトリが見つかりません: {self.repo_path}")
+            return False
         
         # Gitプロセスとロックファイルをチェック
         if self.check_git_processes():
@@ -556,16 +631,13 @@ class GitAutoPush:
         
         # ステータスを表示
         self.debug_print("git statusを取得中...")
-        status_result = self.run_command("git status --porcelain")
+        status_result = self.run_command("git status --porcelain -u")
         if status_result and status_result.stdout.strip():
             print("\n📝 変更されたファイル:")
             for line in status_result.stdout.strip().split('\n'):
                 print(f"  {line}")
-        
-        # 変更があるかチェック
-        if not self.has_changes():
-            print("ℹ️  変更がありません")
-            return True
+        else:
+            self.debug_print("変更されたファイルはありません")
         
         # ステージングの確認
         if not self.confirm_action("変更をステージングしますか？"):
