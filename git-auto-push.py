@@ -13,6 +13,7 @@ from pathlib import Path
 import json
 import webbrowser
 import urllib.parse
+import platform
 
 
 class GitAutoPush:
@@ -21,7 +22,125 @@ class GitAutoPush:
         self.git_path = self.repo_path / ".git"
         self.debug = debug
         self.last_error = None
+
+        # 実行環境の検出
+        self.platform_info = self.detect_platform()
         self.github_cli_available = self.check_github_cli()
+
+        # プラットフォーム情報をデバッグ出力
+        platform_name = self.platform_info['name']
+        platform_type = self.platform_info['type']
+        self.debug_print(f"🖥️ 実行環境: {platform_name} ({platform_type})")
+        self.debug_print(f"🐍 Python: {self.platform_info['python_version']}")
+        self.debug_print(f"🏠 ホーム: {self.platform_info['home_dir']}")
+
+    def detect_platform(self):
+        """実行環境を検出"""
+        system = platform.system().lower()
+        machine = platform.machine()
+        python_version = platform.python_version()
+
+        platform_info = {
+            'system': system,
+            'machine': machine,
+            'python_version': python_version,
+            'type': 'unknown',
+            'name': 'Unknown',
+            'shell': 'unknown',
+            'home_dir': str(Path.home()),
+            'is_windows': False,
+            'is_macos': False,
+            'is_linux': False,
+            'is_wsl': False
+        }
+
+        # Windows環境の検出
+        if system == 'windows':
+            platform_info.update({
+                'type': 'windows',
+                'name': f"Windows {platform.release()}",
+                'shell': 'cmd',
+                'is_windows': True
+            })
+
+            # PowerShellの検出
+            try:
+                result = subprocess.run(
+                    "pwsh --version", shell=True, capture_output=True)
+                if result.returncode == 0:
+                    platform_info['shell'] = 'pwsh'
+                else:
+                    result = subprocess.run(
+                        "powershell -Command $PSVersionTable.PSVersion",
+                        shell=True, capture_output=True)
+                    if result.returncode == 0:
+                        platform_info['shell'] = 'powershell'
+            except Exception:
+                pass
+
+        # macOS環境の検出
+        elif system == 'darwin':
+            platform_info.update({
+                'type': 'macos',
+                'name': f"macOS {platform.mac_ver()[0]}",
+                'shell': 'zsh',
+                'is_macos': True
+            })
+
+        # Linux環境の検出
+        elif system == 'linux':
+            platform_info.update({
+                'type': 'linux',
+                'name': f"Linux {platform.release()}",
+                'shell': 'bash',
+                'is_linux': True
+            })
+
+            # WSL環境の検出
+            try:
+                with open('/proc/version', 'r') as f:
+                    version_info = f.read().lower()
+                    if 'microsoft' in version_info or 'wsl' in version_info:
+                        platform_info.update({
+                            'type': 'wsl',
+                            'name': f"WSL {platform.release()}",
+                            'is_wsl': True
+                        })
+            except Exception:
+                pass
+
+        return platform_info
+
+    def get_platform_specific_command(self, base_command, windows_cmd=None, unix_cmd=None):
+        """プラットフォーム固有のコマンドを取得"""
+        if self.platform_info['is_windows'] and windows_cmd:
+            return windows_cmd
+        elif (self.platform_info['is_linux'] or self.platform_info['is_macos'] or self.platform_info['is_wsl']) and unix_cmd:
+            return unix_cmd
+        return base_command
+
+    def run_platform_specific_command(self, command_dict, cwd=None):
+        """プラットフォーム固有のコマンドを実行"""
+        if isinstance(command_dict, str):
+            # 単一コマンドの場合はそのまま実行
+            return self.run_command(command_dict, cwd)
+
+        # プラットフォーム別コマンド辞書の場合
+        platform_type = self.platform_info['type']
+
+        if platform_type in command_dict:
+            command = command_dict[platform_type]
+        elif 'windows' in command_dict and self.platform_info['is_windows']:
+            command = command_dict['windows']
+        elif 'unix' in command_dict and (self.platform_info['is_linux'] or self.platform_info['is_macos'] or self.platform_info['is_wsl']):
+            command = command_dict['unix']
+        elif 'default' in command_dict:
+            command = command_dict['default']
+        else:
+            self.debug_print(f"⚠️ プラットフォーム {platform_type} 用のコマンドが見つかりません")
+            return None
+
+        return self.run_command(command, cwd)
 
     def check_github_cli(self):
         """GitHub CLI (gh) が利用可能かチェック"""
@@ -254,24 +373,225 @@ class GitAutoPush:
         if self.debug:
             print(f"🔍 {message}")
 
+    def analyze_current_directory(self):
+        """現在のディレクトリの状況を分析して適切な処理を判断"""
+        print("📁 現在のディレクトリを分析中...")
+
+        analysis = {
+            'is_git_repo': self.is_git_repo(),
+            'is_empty': self.is_directory_empty(),
+            'has_source_files': self.has_source_files(),
+            'is_system_folder': self.is_system_folder(),
+            'is_nested_repo': self.is_nested_in_git_repo(),
+            'folder_type': 'unknown',
+            'git_init_recommended': False,
+            'warning_message': None,
+            'action_recommendation': None
+        }
+
+        # フォルダタイプの判定
+        if analysis['is_git_repo']:
+            analysis['folder_type'] = 'existing_git_repo'
+            analysis['action_recommendation'] = 'このフォルダは既にGitリポジトリです'
+
+        elif analysis['is_system_folder']:
+            analysis['folder_type'] = 'system_folder'
+            analysis['warning_message'] = '⚠️ システムフォルダでのgit init は推奨されません'
+            analysis['action_recommendation'] = 'システムフォルダ以外での実行をお勧めします'
+
+        elif analysis['is_nested_repo']:
+            analysis['folder_type'] = 'nested_in_repo'
+            analysis['warning_message'] = '⚠️ 既存のGitリポジトリ内にネストされています'
+            analysis['action_recommendation'] = 'サブモジュールとして追加するか、別の場所に移動してください'
+
+        elif analysis['is_empty']:
+            analysis['folder_type'] = 'empty_folder'
+            analysis['git_init_recommended'] = True
+            analysis['action_recommendation'] = '空のフォルダです。新しいプロジェクトの開始に適しています'
+
+        elif analysis['has_source_files']:
+            analysis['folder_type'] = 'source_project'
+            analysis['git_init_recommended'] = True
+            analysis['action_recommendation'] = 'ソースファイルが見つかりました。Gitリポジトリ化をお勧めします'
+
+        else:
+            analysis['folder_type'] = 'general_folder'
+            analysis['git_init_recommended'] = True
+            analysis['action_recommendation'] = '一般的なフォルダです。必要に応じてGitリポジトリ化できます'
+
+        return analysis
+
+    def is_directory_empty(self):
+        """ディレクトリが空かどうかチェック"""
+        try:
+            return len(list(self.repo_path.iterdir())) == 0
+        except Exception:
+            return False
+
+    def has_source_files(self):
+        """ソースファイルが含まれているかチェック"""
+        source_extensions = {
+            '.py', '.js', '.ts', '.java', '.cpp', '.c', '.cs', '.php',
+            '.rb', '.go', '.rs', '.swift', '.kt', '.scala', '.sh', '.bat',
+            '.html', '.css', '.vue', '.jsx', '.tsx', '.json', '.xml',
+            '.yaml', '.yml', '.md', '.txt', '.sql', '.r', '.m', '.pl'
+        }
+
+        config_files = {
+            'package.json', 'requirements.txt', 'Cargo.toml', 'pom.xml',
+            'build.gradle', 'Makefile', 'CMakeLists.txt', 'setup.py',
+            'pyproject.toml', 'composer.json', 'Gemfile', 'go.mod'
+        }
+
+        try:
+            for item in self.repo_path.iterdir():
+                if item.is_file():
+                    # ファイル拡張子のチェック
+                    if item.suffix.lower() in source_extensions:
+                        return True
+                    # 設定ファイルのチェック
+                    if item.name in config_files:
+                        return True
+                elif item.is_dir() and item.name in {
+                    'src', 'lib', 'app', 'components', 'modules'
+                }:
+                    # 一般的なソースディレクトリのチェック
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def is_system_folder(self):
+        """システムフォルダかどうかチェック"""
+        path_str = str(self.repo_path).lower()
+
+        # Windows システムフォルダ
+        windows_system_paths = [
+            'c:\\windows', 'c:\\program files', 'c:\\program files (x86)',
+            'c:\\programdata', 'c:\\users\\public', 'c:\\system volume information',
+            '\\appdata\\', '\\temp\\', '\\tmp\\'
+        ]
+
+        # Unix系 システムフォルダ
+        unix_system_paths = [
+            '/bin', '/sbin', '/usr/bin', '/usr/sbin', '/etc', '/var', '/tmp',
+            '/sys', '/proc', '/dev', '/boot', '/root'
+        ]
+
+        system_paths = windows_system_paths if self.platform_info['is_windows'] else unix_system_paths
+
+        for sys_path in system_paths:
+            if sys_path in path_str:
+                return True
+
+        return False
+
+    def is_nested_in_git_repo(self):
+        """既存のGitリポジトリ内にネストされているかチェック"""
+        if self.is_git_repo():
+            return False  # 自分自身がリポジトリなら、ネストではない
+
+        current = self.repo_path.parent
+        while current != current.parent:  # ルートに達するまで
+            if (current / '.git').exists():
+                return True
+            current = current.parent
+        return False
+
+    def print_directory_analysis(self, analysis):
+        """ディレクトリ分析結果を表示"""
+        print("\n" + "=" * 60)
+        print("📊 ディレクトリ分析結果")
+        print("=" * 60)
+
+        print(f"📂 対象フォルダ: {self.repo_path}")
+        print(f"🏷️  フォルダタイプ: {analysis['folder_type']}")
+        print(f"🔍 Git リポジトリ: {'はい' if analysis['is_git_repo'] else 'いいえ'}")
+        print(f"📁 空のフォルダ: {'はい' if analysis['is_empty'] else 'いいえ'}")
+        print(f"📝 ソースファイル: {'あり' if analysis['has_source_files'] else 'なし'}")
+        print(f"⚙️  システムフォルダ: {'はい' if analysis['is_system_folder'] else 'いいえ'}")
+        print(f"🔗 ネストリポジトリ: {'はい' if analysis['is_nested_repo'] else 'いいえ'}")
+
+        print(f"\n💡 推奨アクション: {analysis['action_recommendation']}")
+
+        if analysis['warning_message']:
+            print(f"\n{analysis['warning_message']}")
+
+        if analysis['git_init_recommended']:
+            print("\n✅ git init の実行を推奨します")
+        else:
+            print("\n❌ git init の実行は推奨されません")
+
+        print("=" * 60)
+
+        return analysis
+
+    def should_proceed_with_git_init(self, analysis):
+        """git init を実行すべきかどうかを判断"""
+        if analysis['is_git_repo']:
+            print("✅ 既にGitリポジトリです")
+            return True  # 既にリポジトリなら処理続行
+
+        if analysis['is_system_folder']:
+            print("\n⚠️ システムフォルダでのgit init は危険です！")
+            return self.confirm_action("本当に続行しますか？（推奨: いいえ）")
+
+        if analysis['is_nested_repo']:
+            print("\n⚠️ 既存のGitリポジトリ内での git init は推奨されません")
+            print("サブモジュールやサブツリーの使用を検討してください")
+            return self.confirm_action("それでも git init を実行しますか？")
+
+        if not analysis['git_init_recommended']:
+            return self.confirm_action("git init を実行してもよろしいですか？")
+
+        return True  # 推奨される場合は自動的に続行
+
     def init_git_repo(self):
-        """Gitリポジトリを初期化"""
-        print("🔧 Gitリポジトリを初期化しています...")
+        """Gitリポジトリを初期化（ディレクトリ分析付き）"""
+        print("🔧 Gitリポジトリ初期化の準備中...")
 
         # 既にGitリポジトリの場合は成功として扱う
         if self.is_git_repo():
             print("✅ 既にGitリポジトリとして初期化されています")
             return True
 
+        # ディレクトリ分析
+        analysis = self.analyze_current_directory()
+        self.print_directory_analysis(analysis)
+
+        # git init 実行の判断
+        if not self.should_proceed_with_git_init(analysis):
+            print("git init の実行をキャンセルしました")
+            return False
+
+        # Gitリポジトリの初期化
+        print("🔧 git init を実行中...")
         result = self.run_command("git init")
         if result:
             print("✅ Gitリポジトリを初期化しました")
+
+            # 初期化後の推奨アクション
+            self.suggest_post_init_actions(analysis)
             return True
         else:
             print("❌ Gitリポジトリの初期化に失敗しました")
             if hasattr(self, "last_error") and self.last_error:
                 print(f"エラー詳細: {self.last_error}")
             return False
+
+    def suggest_post_init_actions(self, analysis):
+        """git init 後の推奨アクションを提案"""
+        print("\n💡 次のステップの提案:")
+
+        if analysis['folder_type'] == 'empty_folder':
+            print("📝 READMEファイルの作成をお勧めします")
+            print("📝 .gitignoreファイルの追加をお勧めします")
+
+        elif analysis['folder_type'] == 'source_project':
+            print("📝 .gitignoreファイルの確認・追加をお勧めします")
+            print("🚀 初回コミットの準備が整いました")
+
+        print("🔗 リモートリポジトリ（GitHub等）の設定をお勧めします")
 
     def is_git_repo(self):
         """Gitリポジトリかどうかをチェック"""
@@ -299,37 +619,35 @@ class GitAutoPush:
     def check_git_processes(self):
         """実行中のGitプロセスをチェック"""
         self.debug_print("🔍 実行中のGitプロセスをチェック中...")
+
+        # プラットフォーム別のプロセス確認コマンド
+        process_commands = {
+            'windows': 'tasklist /FI "IMAGENAME eq git.exe"',
+            'unix': 'ps aux | grep git',
+            'wsl': 'ps aux | grep git',
+            'default': 'ps aux | grep git'
+        }
+
         try:
-            # Windowsの場合
-            if os.name == "nt":
-                result = subprocess.run(
-                    'tasklist /FI "IMAGENAME eq git.exe"',
-                    shell=True,
-                    capture_output=True,
-                )
-                stdout = (
-                    result.stdout.decode("utf-8", errors="ignore")
-                    if result.stdout
-                    else ""
-                )
+            result = self.run_platform_specific_command(process_commands)
+            if not result:
+                self.debug_print("⚠️ プロセスチェックコマンドの実行に失敗")
+                return False
+
+            stdout = result.stdout
+
+            # プラットフォーム別の結果解析
+            if self.platform_info['is_windows']:
                 if "git.exe" in stdout:
                     print("⚠️  実行中のGitプロセスが見つかりました:")
                     print(stdout)
                     return True
-            # Unix系の場合
             else:
-                result = subprocess.run(
-                    "ps aux | grep git", shell=True, capture_output=True
-                )
-                stdout = (
-                    result.stdout.decode("utf-8", errors="ignore")
-                    if result.stdout
-                    else ""
-                )
+                # Unix系（Linux、macOS、WSL）
                 git_processes = [
                     line
                     for line in stdout.split("\n")
-                    if "git" in line and "grep" not in line
+                    if "git" in line and "grep" not in line and line.strip()
                 ]
                 if git_processes:
                     print("⚠️  実行中のGitプロセスが見つかりました:")
@@ -566,7 +884,7 @@ class GitAutoPush:
         repo_url = f"https://github.com/{username}/{repo_name}"
 
         try:
-            print(f"🌐 GitHubリポジトリをブラウザで開いています...")
+            print("🌐 GitHubリポジトリをブラウザで開いています...")
             print(f"🔗 URL: {repo_url}")
             webbrowser.open(repo_url)
             print("✅ ブラウザでGitHubリポジトリを開きました")
@@ -753,13 +1071,6 @@ class GitAutoPush:
             "browser_open": False,
         }
 
-        # デバッグ情報
-        self.debug_print(f"📁 作業ディレクトリ: {os.getcwd()}")
-        self.debug_print(f"📂 指定リポジトリ: {self.repo_path}")
-        self.debug_print(f"✅ リポジトリ存在チェック: {self.repo_path.exists()}")
-        self.debug_print(f"🔧 .gitパス: {self.git_path}")
-        self.debug_print(f"✅ .gitパス存在チェック: {self.git_path.exists()}")
-
         # リポジトリディレクトリの存在確認
         if not self.repo_path.exists():
             print(
@@ -767,6 +1078,26 @@ class GitAutoPush:
             )
             self.print_execution_summary(execution_results)
             return False
+
+        # 📊 初期ディレクトリ分析
+        print("\n� 実行前のディレクトリ分析を開始...")
+        initial_analysis = self.analyze_current_directory()
+        self.print_directory_analysis(initial_analysis)
+
+        # 分析結果に基づく警告表示
+        if initial_analysis['warning_message']:
+            print(f"\n{initial_analysis['warning_message']}")
+            if not self.confirm_action("続行しますか？"):
+                print("処理を中止しました")
+                self.print_execution_summary(execution_results)
+                return False
+
+        # デバッグ情報
+        self.debug_print(f"📁 作業ディレクトリ: {os.getcwd()}")
+        self.debug_print(f"📂 指定リポジトリ: {self.repo_path}")
+        self.debug_print(f"✅ リポジトリ存在チェック: {self.repo_path.exists()}")
+        self.debug_print(f"🔧 .gitパス: {self.git_path}")
+        self.debug_print(f"✅ .gitパス存在チェック: {self.git_path.exists()}")
 
         # Gitプロセスとロックファイルをチェック
         if self.check_git_processes():
@@ -959,6 +1290,4 @@ def main():
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
     main()
