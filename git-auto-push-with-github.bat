@@ -290,4 +290,5 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 echo ✅ GitHubリポジトリを作成しました
-exit /b 0
+pause
+

@@ -14,6 +14,7 @@ import json
 import webbrowser
 import urllib.parse
 
+
 class GitAutoPush:
     def __init__(self, repo_path=".", debug=False):
         self.repo_path = Path(repo_path).resolve()
@@ -25,11 +26,7 @@ class GitAutoPush:
     def check_github_cli(self):
         """GitHub CLI (gh) が利用可能かチェック"""
         try:
-            result = subprocess.run(
-                "gh --version",
-                shell=True,
-                capture_output=True
-            )
+            result = subprocess.run("gh --version", shell=True, capture_output=True)
             if result.returncode == 0:
                 self.debug_print("✅ GitHub CLI (gh) が利用可能です")
                 return True
@@ -46,11 +43,7 @@ class GitAutoPush:
             return False
 
         try:
-            result = subprocess.run(
-                "gh auth status",
-                shell=True,
-                capture_output=True
-            )
+            result = subprocess.run("gh auth status", shell=True, capture_output=True)
             if result.returncode == 0:
                 self.debug_print("✅ GitHub CLI 認証済み")
                 return True
@@ -71,15 +64,15 @@ class GitAutoPush:
             return None
 
         try:
-            result = subprocess.run(
-                "gh api user",
-                shell=True,
-                capture_output=True
-            )
+            result = subprocess.run("gh api user", shell=True, capture_output=True)
             if result.returncode == 0:
-                stdout = result.stdout.decode('utf-8', errors='ignore') if result.stdout else ""
+                stdout = (
+                    result.stdout.decode("utf-8", errors="ignore")
+                    if result.stdout
+                    else ""
+                )
                 user_data = json.loads(stdout)
-                username = user_data.get('login')
+                username = user_data.get("login")
                 self.debug_print(f"👤 GitHub ユーザー名: {username}")
                 return username
         except Exception as e:
@@ -103,37 +96,39 @@ class GitAutoPush:
                 f"gh repo view {username}/{repo_name}",
                 shell=True,
                 capture_output=True,
-                text=True
+                text=True,
             )
             if result.returncode == 0:
-                self.debug_print(f"✅ GitHub リポジトリ {username}/{repo_name} が存在します")
+                self.debug_print(
+                    f"✅ GitHub リポジトリ {username}/{repo_name} が存在します"
+                )
                 return True
             else:
-                self.debug_print(f"❌ GitHub リポジトリ {username}/{repo_name} が見つかりません")
+                self.debug_print(
+                    f"❌ GitHub リポジトリ {username}/{repo_name} が見つかりません"
+                )
                 return False
         except Exception as e:
             self.debug_print(f"⚠️ リモートリポジトリチェックエラー: {e}")
             return None
 
     def create_github_repo(self):
-        """GitHub リポジトリを作成"""
+        """GitHub リポジトリを作成し、リモート追加まで自動化"""
         if not self.github_cli_available:
-            print("❌ GitHub CLI (gh) が利用できません。手動でリポジトリを作成してください。")
+            print(
+                "❌ GitHub CLI (gh) が利用できません。手動でリポジトリを作成してください。"
+            )
             return False
-
         if not self.check_github_auth():
-            print("❌ GitHub CLI の認証が必要です。'gh auth login' を実行してください。")
+            print(
+                "❌ GitHub CLI の認証が必要です。'gh auth login' を実行してください。"
+            )
             return False
-
         repo_name = self.get_repo_name()
-
         print(f"📦 GitHub リポジトリ '{repo_name}' を作成しています...")
-
-        # リポジトリの可視性を選択
         print("\nリポジトリの可視性を選択してください:")
         print("1. public (公開)")
         print("2. private (非公開)")
-
         while True:
             choice = input("選択 (1/2): ").strip()
             if choice == "1":
@@ -144,42 +139,27 @@ class GitAutoPush:
                 break
             else:
                 print("1 または 2 を選択してください")
-
-        # 説明文を入力
         description = self.get_user_input("リポジトリの説明 (オプション)", "")
-
-        # GitHub リポジトリ作成コマンドを構築
-        cmd = f"gh repo create {repo_name} {visibility}"
+        cmd = (
+            f"gh repo create {repo_name} {visibility} --source=. --remote=origin --push"
+        )
         if description:
             cmd += f' --description "{description}"'
-
         try:
             result = subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                cwd=self.repo_path
+                cmd, shell=True, capture_output=True, cwd=self.repo_path
             )
-
             if result.returncode == 0:
-                print(f"✅ GitHub リポジトリ '{repo_name}' を作成しました")
-
-                # リモートを追加
-                username = self.get_github_username()
-                if username:
-                    remote_url = f"https://github.com/{username}/{repo_name}.git"
-                    add_remote_result = self.run_command(f"git remote add origin {remote_url}")
-                    if add_remote_result:
-                        print(f"✅ リモートリポジトリを追加しました: {remote_url}")
-                        return True
-                    else:
-                        print("⚠️  リモートリポジトリの追加に失敗しました")
-                        return False
-                else:
-                    print("⚠️  GitHub ユーザー名の取得に失敗しました")
-                    return False
+                print(
+                    f"✅ GitHub リポジトリ '{repo_name}' を作成し、リモート追加・初回pushまで完了しました"
+                )
+                return True
             else:
-                stderr = result.stderr.decode('utf-8', errors='ignore') if result.stderr else ""
+                stderr = (
+                    result.stderr.decode("utf-8", errors="ignore")
+                    if result.stderr
+                    else ""
+                )
                 print(f"❌ GitHub リポジトリの作成に失敗しました: {stderr}")
                 return False
         except Exception as e:
@@ -189,7 +169,9 @@ class GitAutoPush:
     def handle_github_repository(self):
         """GitHub リポジトリの確認と作成処理"""
         if not self.github_cli_available:
-            print("ℹ️  GitHub CLI が利用できません。手動でリポジトリを確認してください。")
+            print(
+                "ℹ️  GitHub CLI が利用できません。手動でリポジトリを確認してください。"
+            )
             return True
 
         # リモートリポジトリの存在確認
@@ -221,12 +203,7 @@ class GitAutoPush:
 
             # Windows環境での文字エンコーディング問題を解決
             # バイナリモードで実行して、適切にデコード
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=cwd,
-                capture_output=True
-            )
+            result = subprocess.run(command, shell=True, cwd=cwd, capture_output=True)
 
             # バイナリ出力を安全にデコード
             def safe_decode(data):
@@ -234,7 +211,7 @@ class GitAutoPush:
                     return ""
 
                 # 複数のエンコーディングを試行
-                encodings = ['utf-8', 'cp932', 'shift_jis', 'iso-8859-1']
+                encodings = ["utf-8", "cp932", "shift_jis", "iso-8859-1"]
 
                 for encoding in encodings:
                     try:
@@ -243,7 +220,7 @@ class GitAutoPush:
                         continue
 
                 # 全て失敗した場合は、エラーを無視してデコード
-                return data.decode('utf-8', errors='ignore')
+                return data.decode("utf-8", errors="ignore")
 
             stdout = safe_decode(result.stdout)
             stderr = safe_decode(result.stderr)
@@ -255,13 +232,17 @@ class GitAutoPush:
                     self.stdout = stdout
                     self.stderr = stderr
 
-            decoded_result = Result(result.returncode, stdout, stderr)            # git initは成功時でも標準エラー出力に出力することがある
+            decoded_result = Result(
+                result.returncode, stdout, stderr
+            )  # git initは成功時でも標準エラー出力に出力することがある
             if decoded_result.returncode == 0:
                 self.debug_print(f"✅ 成功: stdout={stdout}, stderr={stderr}")
                 return decoded_result
             else:
                 self.last_error = stderr
-                self.debug_print(f"❌ 失敗: returncode={decoded_result.returncode}, stderr={stderr}")
+                self.debug_print(
+                    f"❌ 失敗: returncode={decoded_result.returncode}, stderr={stderr}"
+                )
                 return None
         except Exception as e:
             self.last_error = str(e)
@@ -288,7 +269,7 @@ class GitAutoPush:
             return True
         else:
             print("❌ Gitリポジトリの初期化に失敗しました")
-            if hasattr(self, 'last_error') and self.last_error:
+            if hasattr(self, "last_error") and self.last_error:
                 print(f"エラー詳細: {self.last_error}")
             return False
 
@@ -308,9 +289,9 @@ class GitAutoPush:
         """アクションの確認"""
         while True:
             response = input(f"{message} (y/n): ").strip().lower()
-            if response in ['y', 'yes']:
+            if response in ["y", "yes"]:
                 return True
-            elif response in ['n', 'no']:
+            elif response in ["n", "no"]:
                 return False
             else:
                 print("'y' または 'n' を入力してください")
@@ -320,13 +301,17 @@ class GitAutoPush:
         self.debug_print("🔍 実行中のGitプロセスをチェック中...")
         try:
             # Windowsの場合
-            if os.name == 'nt':
+            if os.name == "nt":
                 result = subprocess.run(
                     'tasklist /FI "IMAGENAME eq git.exe"',
                     shell=True,
-                    capture_output=True
+                    capture_output=True,
                 )
-                stdout = result.stdout.decode('utf-8', errors='ignore') if result.stdout else ""
+                stdout = (
+                    result.stdout.decode("utf-8", errors="ignore")
+                    if result.stdout
+                    else ""
+                )
                 if "git.exe" in stdout:
                     print("⚠️  実行中のGitプロセスが見つかりました:")
                     print(stdout)
@@ -334,12 +319,18 @@ class GitAutoPush:
             # Unix系の場合
             else:
                 result = subprocess.run(
-                    'ps aux | grep git',
-                    shell=True,
-                    capture_output=True
+                    "ps aux | grep git", shell=True, capture_output=True
                 )
-                stdout = result.stdout.decode('utf-8', errors='ignore') if result.stdout else ""
-                git_processes = [line for line in stdout.split('\n') if 'git' in line and 'grep' not in line]
+                stdout = (
+                    result.stdout.decode("utf-8", errors="ignore")
+                    if result.stdout
+                    else ""
+                )
+                git_processes = [
+                    line
+                    for line in stdout.split("\n")
+                    if "git" in line and "grep" not in line
+                ]
                 if git_processes:
                     print("⚠️  実行中のGitプロセスが見つかりました:")
                     for process in git_processes:
@@ -360,7 +351,7 @@ class GitAutoPush:
             "HEAD.lock",
             "config.lock",
             "refs/heads/*.lock",
-            "refs/remotes/*/**.lock"
+            "refs/remotes/*/**.lock",
         ]
 
         cleaned = 0
@@ -400,7 +391,7 @@ class GitAutoPush:
         lock_files = [
             self.git_path / "index.lock",
             self.git_path / "HEAD.lock",
-            self.git_path / "config.lock"
+            self.git_path / "config.lock",
         ]
 
         found_locks = []
@@ -452,8 +443,8 @@ class GitAutoPush:
         result = self.run_command("git branch")
         if result:
             branches = []
-            for line in result.stdout.strip().split('\n'):
-                branch = line.strip().replace('* ', '')
+            for line in result.stdout.strip().split("\n"):
+                branch = line.strip().replace("* ", "")
                 if branch:
                     branches.append(branch)
             return branches
@@ -475,12 +466,24 @@ class GitAutoPush:
             return True
         return False
 
+    def ensure_git_identity(self):
+        # ユーザー名
+        name_result = self.run_command("git config user.name")
+        if not name_result or not name_result.stdout.strip():
+            self.run_command('git config user.name "Auto Committer"')
+        # メールアドレス
+        email_result = self.run_command("git config user.email")
+        if not email_result or not email_result.stdout.strip():
+            self.run_command('git config user.email "autocommit@example.com"')
+
     def commit(self, message=None):
-        """コミットを実行"""
+        self.ensure_git_identity()  # ユーザー名・メールアドレスを自動設定
         if not message:
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             default_message = f"Auto commit: {timestamp}"
-            message = self.get_user_input("コミットメッセージを入力してください", default_message)
+            message = self.get_user_input(
+                "コミットメッセージを入力してください", default_message
+            )
 
         print(f"💾 コミット中: {message}")
         result = self.run_command(f'git commit -m "{message}"')
@@ -489,41 +492,57 @@ class GitAutoPush:
             return True
         return False
 
-    def push(self, branch=None):
-        """プッシュを実行"""
+    def push(self, branch=None, force=False):
+        """プッシュを実行（リモートがなければ自動作成）"""
         if not branch:
             current_branch = self.get_current_branch()
             branches = self.get_branches()
-
             print(f"\n利用可能なブランチ: {', '.join(branches)}")
             print(f"現在のブランチ: {current_branch}")
-
-            branch = self.get_user_input("プッシュするブランチを選択してください", current_branch)
+            branch = self.get_user_input(
+                "プッシュするブランチを選択してください", current_branch
+            )
             if branch not in branches:
-                print(f"⚠️  ブランチ '{branch}' は存在しません。新しいブランチとして作成されます。")
+                print(
+                    f"⚠️  ブランチ '{branch}' は存在しません。新しいブランチとして作成されます。"
+                )
 
         if not self.confirm_action(f"'{branch}' ブランチにプッシュしますか？"):
             print("プッシュをキャンセルしました")
             return False
 
         print(f"🚀 {branch}ブランチにプッシュ中...")
-        result = self.run_command(f"git push origin {branch}")
+        push_cmd = f"git push origin {branch}"
+        if force:
+            push_cmd += " --force"
+        result = self.run_command(push_cmd)
         if result:
             print("✅ プッシュ完了")
             return True
         else:
-            # リモートリポジトリが存在しない可能性をチェック
+            # リモートリポジトリが存在しない場合は自動作成
             print("🔄 プッシュに失敗しました。リモートリポジトリを確認中...")
-
-            if self.handle_github_repository():
-                # リモートリポジトリが作成された場合、再度プッシュを試行
-                print("🔄 リモートリポジトリが設定されました。再度プッシュします...")
-                result = self.run_command(f"git push -u origin {branch}")
-                if result:
-                    print("✅ プッシュ完了")
-                    return True
+            remote_url_result = self.run_command("git remote get-url origin")
+            if not remote_url_result or not remote_url_result.stdout.strip():
+                print(
+                    "⚠️  リモートリポジトリが設定されていません。GitHubリポジトリを作成します。"
+                )
+                if self.create_github_repo():
+                    print(
+                        "🔄 リモートリポジトリが設定されました。再度プッシュします..."
+                    )
+                    result = self.run_command(f"git push -u origin {branch}")
+                    if result:
+                        print("✅ プッシュ完了")
+                        return True
+                    else:
+                        print("❌ プッシュに失敗しました")
+                        return False
+                else:
+                    print("❌ GitHubリポジトリの作成に失敗しました")
+                    return False
             else:
-                # 初回プッシュの場合、upstream を設定
+                # 既存リモートがある場合は upstream 設定で再試行
                 print("🔄 初回プッシュのようです。upstream を設定してリトライします...")
                 result = self.run_command(f"git push -u origin {branch}")
                 if result:
@@ -571,7 +590,7 @@ class GitAutoPush:
         if not result:
             return False
 
-        status_lines = result.stdout.strip().split('\n')
+        status_lines = result.stdout.strip().split("\n")
         branch_info = status_lines[0] if status_lines else ""
 
         # ブランチの分岐を検出
@@ -580,8 +599,8 @@ class GitAutoPush:
             print(f"📊 状況: {branch_info}")
 
             # 詳細な状況を表示
-            ahead_match = __import__('re').search(r'ahead (\d+)', branch_info)
-            behind_match = __import__('re').search(r'behind (\d+)', branch_info)
+            ahead_match = __import__("re").search(r"ahead (\d+)", branch_info)
+            behind_match = __import__("re").search(r"behind (\d+)", branch_info)
 
             if ahead_match and behind_match:
                 ahead = ahead_match.group(1)
@@ -591,12 +610,12 @@ class GitAutoPush:
 
             return True
         elif "ahead" in branch_info:
-            ahead_match = __import__('re').search(r'ahead (\d+)', branch_info)
+            ahead_match = __import__("re").search(r"ahead (\d+)", branch_info)
             if ahead_match:
                 ahead = ahead_match.group(1)
                 print(f"✅ ローカルが {ahead} コミット先行（プッシュ可能）")
         elif "behind" in branch_info:
-            behind_match = __import__('re').search(r'behind (\d+)', branch_info)
+            behind_match = __import__("re").search(r"behind (\d+)", branch_info)
             if behind_match:
                 behind = behind_match.group(1)
                 print(f"📥 リモートが {behind} コミット先行（プル必要）")
@@ -623,7 +642,9 @@ class GitAutoPush:
             elif choice == "2":
                 return self.pull_merge()
             elif choice == "3":
-                if self.confirm_action("⚠️  強制プッシュは危険です。リモートの変更が失われる可能性があります。続行しますか？"):
+                if self.confirm_action(
+                    "⚠️  強制プッシュは危険です。リモートの変更が失われる可能性があります。続行しますか？"
+                ):
                     return self.force_push()
                 else:
                     continue
@@ -665,7 +686,9 @@ class GitAutoPush:
         """git push --force-with-lease を実行"""
         current_branch = self.get_current_branch()
         print(f"🚀 {current_branch} ブランチに強制プッシュ中...")
-        result = self.run_command(f"git push --force-with-lease origin {current_branch}")
+        result = self.run_command(
+            f"git push --force-with-lease origin {current_branch}"
+        )
         if result:
             print("✅ 強制プッシュが完了しました")
             return True
@@ -727,7 +750,7 @@ class GitAutoPush:
             "staging": False,
             "commit": False,
             "push": False,
-            "browser_open": False
+            "browser_open": False,
         }
 
         # デバッグ情報
@@ -739,13 +762,17 @@ class GitAutoPush:
 
         # リポジトリディレクトリの存在確認
         if not self.repo_path.exists():
-            print(f"❌ エラー: 指定されたディレクトリが見つかりません: {self.repo_path}")
+            print(
+                f"❌ エラー: 指定されたディレクトリが見つかりません: {self.repo_path}"
+            )
             self.print_execution_summary(execution_results)
             return False
 
         # Gitプロセスとロックファイルをチェック
         if self.check_git_processes():
-            if not self.confirm_action("実行中のGitプロセスが見つかりました。続行しますか？"):
+            if not self.confirm_action(
+                "実行中のGitプロセスが見つかりました。続行しますか？"
+            ):
                 print("処理を中止しました")
                 self.print_execution_summary(execution_results)
                 return False
@@ -782,7 +809,7 @@ class GitAutoPush:
         status_result = self.run_command("git status --porcelain -u")
         if status_result and status_result.stdout.strip():
             print("\n📝 変更されたファイル:")
-            for line in status_result.stdout.strip().split('\n'):
+            for line in status_result.stdout.strip().split("\n"):
                 print(f"  {line}")
         else:
             self.debug_print("✅ 変更されたファイルはありません")
@@ -806,9 +833,9 @@ class GitAutoPush:
                 execution_results["push"] = True  # スキップも成功として扱う
 
             # ブラウザでの確認
-            print("\n" + "="*50)
+            print("\n" + "=" * 50)
             print("🎉 すべての操作が完了しました！")
-            print("="*50)
+            print("=" * 50)
 
             if self.confirm_browser_check():
                 execution_results["browser_open"] = True
@@ -854,9 +881,9 @@ class GitAutoPush:
         execution_results["push"] = True
 
         # ブラウザでの確認（必須）
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         print("🎉 すべての操作が完了しました！")
-        print("="*50)
+        print("=" * 50)
 
         if self.confirm_browser_check():
             execution_results["browser_open"] = True
@@ -871,31 +898,46 @@ class GitAutoPush:
 
     def print_execution_summary(self, results):
         """実行結果のサマリーを表示"""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("📊 実行結果サマリー")
-        print("="*60)
+        print("=" * 60)
 
         status_icons = {True: "✅", False: "❌"}
 
-        print(f"{status_icons[results['git_init']]} Git初期化: {'成功' if results['git_init'] else '未実行/失敗'}")
-        print(f"{status_icons[results['branch_sync']]} ブランチ同期: {'成功' if results['branch_sync'] else '未実行/失敗'}")
-        print(f"{status_icons[results['staging']]} ステージング: {'成功' if results['staging'] else '未実行/失敗'}")
-        print(f"{status_icons[results['commit']]} コミット: {'成功' if results['commit'] else '未実行/失敗'}")
-        print(f"{status_icons[results['push']]} プッシュ: {'成功' if results['push'] else '未実行/失敗'}")
-        print(f"{status_icons[results['browser_open']]} ブラウザ確認: {'成功' if results['browser_open'] else '未実行/失敗'}")
+        print(
+            f"{status_icons[results['git_init']]} Git初期化: {'成功' if results['git_init'] else '未実行/失敗'}"
+        )
+        print(
+            f"{status_icons[results['branch_sync']]} ブランチ同期: {'成功' if results['branch_sync'] else '未実行/失敗'}"
+        )
+        print(
+            f"{status_icons[results['staging']]} ステージング: {'成功' if results['staging'] else '未実行/失敗'}"
+        )
+        print(
+            f"{status_icons[results['commit']]} コミット: {'成功' if results['commit'] else '未実行/失敗'}"
+        )
+        print(
+            f"{status_icons[results['push']]} プッシュ: {'成功' if results['push'] else '未実行/失敗'}"
+        )
+        print(
+            f"{status_icons[results['browser_open']]} ブラウザ確認: {'成功' if results['browser_open'] else '未実行/失敗'}"
+        )
 
         # 成功した項目の数を計算
         success_count = sum(1 for result in results.values() if result)
         total_count = len(results)
 
-        print(f"\n🎯 成功率: {success_count}/{total_count} ({success_count/total_count*100:.1f}%)")
+        print(
+            f"\n🎯 成功率: {success_count}/{total_count} ({success_count/total_count*100:.1f}%)"
+        )
 
         if success_count == total_count:
             print("🎉 すべての操作が正常に完了しました！")
         else:
             print("⚠️  一部の操作が失敗しました。上記の結果を確認してください。")
 
-        print("="*60)
+        print("=" * 60)
+
 
 def main():
     parser = argparse.ArgumentParser(description="GIT Auto Push Script")
@@ -910,12 +952,13 @@ def main():
     # 自動プッシュ実行
     auto_push = GitAutoPush(args.repo, debug=args.debug)
     success = auto_push.auto_push(
-        message=args.message,
-        branch=args.branch,
-        force=args.force
+        message=args.message, branch=args.branch, force=args.force
     )
 
     sys.exit(0 if success else 1)
 
+
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     main()
