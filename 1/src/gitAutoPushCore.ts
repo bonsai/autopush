@@ -37,18 +37,28 @@ export interface ExecutionResults {
 }
 
 export class GitAutoPushCore {
-    private workspaceRoot: string;
-    private gitPath: string;
-    private outputChannel: vscode.OutputChannel;
-    private config: vscode.WorkspaceConfiguration;
-    private platformInfo: PlatformInfo;
+    private readonly workspaceRoot: string;
+    private readonly gitPath: string;
+    private readonly outputChannel: vscode.OutputChannel;
+    private readonly config: vscode.WorkspaceConfiguration;
+    private readonly platformInfo: PlatformInfo;
+    
+    private static readonly GIT_COMMAND_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+    private static readonly MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB
 
     constructor(workspaceRoot: string, outputChannel: vscode.OutputChannel) {
+        if (!workspaceRoot) {
+            throw new Error('Workspace root path is required');
+        }
+        
         this.workspaceRoot = workspaceRoot;
         this.gitPath = join(workspaceRoot, '.git');
         this.outputChannel = outputChannel;
         this.config = vscode.workspace.getConfiguration('gitAutoPush');
         this.platformInfo = this.detectPlatform();
+        
+        this.log(`Initialized for workspace: ${workspaceRoot}`);
+        this.log(`Detected platform: ${this.platformInfo.name}`);
     }
 
     private detectPlatform(): PlatformInfo {
@@ -379,13 +389,15 @@ export class GitAutoPushCore {
     async runCommand(command: string): Promise<{ success: boolean; stdout: string; stderr: string; error?: any }> {
         return new Promise((resolve) => {
             const startTime = Date.now();
-            this.log(`🔍 実行中: ${command}`);
+            const commandId = Math.random().toString(36).substring(2, 8);
+            
+            this.log(`[${commandId}] 🔍 Executing: ${command}`);
 
             try {
                 const child = exec(command, { 
                     cwd: this.workspaceRoot,
-                    maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-                    timeout: 5 * 60 * 1000 // 5 minutes timeout
+                    maxBuffer: GitAutoPushCore.MAX_BUFFER_SIZE,
+                    timeout: GitAutoPushCore.GIT_COMMAND_TIMEOUT
                 }, (error, stdout, stderr) => {
                     const executionTime = ((Date.now() - startTime) / 1000).toFixed(2);
                     const success = !error;
@@ -448,8 +460,9 @@ export class GitAutoPushCore {
         });
     }
 
-    private log(message: string): void {
+    private log(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
         const timestamp = new Date().toLocaleTimeString();
-        this.outputChannel.appendLine(`[${timestamp}] ${message}`);
+        const prefix = `[${timestamp}] [${level.toUpperCase()}]`;
+        this.outputChannel.appendLine(`${prefix} ${message}`);
     }
 }

@@ -1,5 +1,6 @@
 {
   "name": "git-auto-push",
+  "publisher": "bonsai",
   "displayName": "Git Auto Push",
   "description": "Automate git add, commit, and push operations with interactive confirmation",
   "version": "0.0.1",

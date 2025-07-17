@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { existsSync, statSync } from 'fs';
 import { GitAutoPushCore, ExecutionResults } from './gitAutoPushCore';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -15,21 +16,47 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {}
 
 class GitAutoPush {
-    private workspaceRoot: string;
-    private outputChannel: vscode.OutputChannel;
-    private config: vscode.WorkspaceConfiguration;
-    private core: GitAutoPushCore;
+    private readonly workspaceRoot: string;
+    private readonly outputChannel: vscode.OutputChannel;
+    private readonly config: vscode.WorkspaceConfiguration;
+    private readonly core: GitAutoPushCore;
+    
+    private static readonly EXTENSION_NAME = 'Git Auto Push';
+    private static readonly CONFIG_SECTION = 'gitAutoPush';
 
     constructor() {
-        this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-        this.outputChannel = vscode.window.createOutputChannel('Git Auto Push');
-        this.config = vscode.workspace.getConfiguration('gitAutoPush');
-
-        if (this.workspaceRoot) {
-            this.core = new GitAutoPushCore(this.workspaceRoot, this.outputChannel);
-        } else {
-            throw new Error('ワークスペースが開かれていません');
+        this.workspaceRoot = this.getWorkspaceRoot();
+        this.outputChannel = vscode.window.createOutputChannel(GitAutoPush.EXTENSION_NAME);
+        this.config = vscode.workspace.getConfiguration(GitAutoPush.CONFIG_SECTION);
+        
+        if (!this.workspaceRoot) {
+            throw new Error('No workspace is open');
         }
+        
+        this.core = new GitAutoPushCore(this.workspaceRoot, this.outputChannel);
+    }
+    
+    private getWorkspaceRoot(): string {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            return '';
+        }
+        
+        // If there's only one folder, use it
+        if (workspaceFolders.length === 1) {
+            return workspaceFolders[0].uri.fsPath;
+        }
+        
+        // If there are multiple folders, try to find the root git repo
+        for (const folder of workspaceFolders) {
+            const gitPath = folder.uri.fsPath + '/.git';
+            if (existsSync(gitPath) && statSync(gitPath).isDirectory()) {
+                return folder.uri.fsPath;
+            }
+        }
+        
+        // Default to the first folder if no git repo is found
+        return workspaceFolders[0].uri.fsPath;
     }
 
     async execute(): Promise<void> {
@@ -47,6 +74,24 @@ class GitAutoPush {
 
         try {
             this.log(`📂 リポジトリ: ${this.workspaceRoot}`);
+
+            // リポジトリの確認を求める
+            const repoName = this.workspaceRoot.split('/').pop() || '現在のリポジトリ';
+            const confirmMessage = `操作対象のリポジトリ: ${repoName}\n${this.workspaceRoot}\n\nこのリポジトリでよろしいですか？`;
+            
+            const confirm = await vscode.window.showInformationMessage(
+                confirmMessage,
+                { modal: true },
+                'はい', 'キャンセル'
+            );
+
+            if (confirm !== 'はい') {
+                this.log('処理をキャンセルしました');
+                await vscode.window.showInformationMessage('処理をキャンセルしました');
+                return;
+            }
+            
+            this.log(`✅ リポジトリを確認しました: ${this.workspaceRoot}`);
 
             // ディレクトリ分析
             const analysis = await this.core.analyzeCurrentDirectory();
@@ -305,16 +350,56 @@ class GitAutoPush {
     private async openInBrowser(): Promise<void> {
         this.log('🌐 GitHubリポジトリをブラウザで開いています...');
 
-        const result = await this.core.runCommand('gh repo view --web');
-        if (result.success) {
-            this.log('✅ ブラウザでGitHubリポジトリを開きました');
-        } else {
-            this.log('⚠️ ブラウザでの表示に失敗しました');
+        try {
+            // まずGitHub CLIで開くのを試みる
+            const ghResult = await this.core.runCommand('gh --version');
+            if (ghResult.success) {
+                const result = await this.core.runCommand('gh repo view --web');
+                if (result.success) {
+                    this.log('✅ GitHub CLIでリポジトリを開きました');
+                    return;
+                }
+            }
+            
+            // GitHub CLIが使えない場合は、リモートURLから直接開く
+            this.log('GitHub CLIが利用できないため、リモートURLから開きます...');
+            
+            // リモートURLを取得
+            const remoteResult = await this.core.runCommand('git remote get-url origin');
+            if (remoteResult.success) {
+                let repoUrl = remoteResult.stdout.trim();
+                
+                // SSH形式のURLをHTTPS形式に変換
+                if (repoUrl.startsWith('git@')) {
+                    repoUrl = repoUrl
+                        .replace(':', '/')
+                        .replace('git@', 'https://')
+                        .replace('.git', '');
+                } else if (repoUrl.endsWith('.git')) {
+                    repoUrl = repoUrl.replace('.git', '');
+                }
+                
+                // ブラウザで開く
+                await vscode.env.openExternal(vscode.Uri.parse(repoUrl));
+                this.log(`✅ ブラウザでリポジトリを開きました: ${repoUrl}`);
+            } else {
+                throw new Error('リモートリポジトリのURLを取得できませんでした');
+            }
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.log(`⚠️ ブラウザでの表示に失敗しました: ${errorMessage}`);
         }
     }
 
-    private log(message: string): void {
+    private log(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
         const timestamp = new Date().toLocaleTimeString();
-        this.outputChannel.appendLine(`[${timestamp}] ${message}`);
+        const prefix = `[${timestamp}] [${level.toUpperCase()}]`;
+        this.outputChannel.appendLine(`${prefix} ${message}`);
+        
+        if (level === 'error' && this.config.get('showErrorNotifications', true)) {
+            vscode.window.showErrorMessage(message);
+        } else if (level === 'warn' && this.config.get('showWarningNotifications', true)) {
+            vscode.window.showWarningMessage(message);
+        }
     }
 }
